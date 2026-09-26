@@ -133,23 +133,39 @@ export function SeriesPanel({
                   }
                   onClick={() => !off && onFocusOverride(ov)}
                 >
-                  <span className={`dot ${ov.cancelled ? 'cancelled' : 'override'}`} />
+                  <span className={`dot ${ov.range ? 'range' : ov.cancelled ? 'cancelled' : 'override'}`} />
                   <label
                     className="oi-main"
                     onClick={(e) => {
                       e.stopPropagation();
+                      // 统一在此切换：阻止默认行为，避免点击经 label/checkbox 双通道重复触发
+                      e.preventDefault();
                       onToggleOverride(ov.id);
                     }}
-                    title={off ? '勾选以重新启用该例外' : '取消勾选以停用该例外（恢复原实例）'}
+                    title={
+                      off
+                        ? '勾选以重新启用该例外'
+                        : ov.range
+                          ? '取消勾选以停用该范围例外（受影响实例回到前一范围状态）'
+                          : '取消勾选以停用该例外（恢复原实例）'
+                    }
                   >
                     <input
                       type="checkbox"
                       checked={!off}
-                      onChange={() => onToggleOverride(ov.id)}
+                      onChange={() => {
+                        /* 切换由 label onClick 统一处理（否则与 label 点击双触发相互抵消） */
+                      }}
                     />{' '}
-                    {ov.cancelled ? 'CANCELLED' : '覆盖'} ·{' '}
-                    {formatWall(Math.round(ov.recurrenceId.toUnixTime()), tzidOf(m), ov.isAllDay)} ·{' '}
-                    {ov.summary}
+                    {ov.range ? '范围' : ov.cancelled ? 'CANCELLED' : '覆盖'} ·{' '}
+                    {formatWall(Math.round(ov.recurrenceId.toUnixTime()), tzidOf(m), ov.isAllDay)}
+                    {ov.range && (
+                      <>
+                        {' 起 → 新起点 '}
+                        {formatWall(Math.round(ov.dtstart.toUnixTime()), tzidOf(m), ov.isAllDay)}
+                      </>
+                    )}{' '}
+                    · {ov.summary}
                     <div className="oi-line">
                       L{ov.block.range.start}–{ov.block.range.end}（RECURRENCE-ID L
                       {ov.block.propLines['RECURRENCE-ID']?.[0] ?? '?'}）

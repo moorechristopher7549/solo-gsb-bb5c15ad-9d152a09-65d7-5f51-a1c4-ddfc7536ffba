@@ -256,6 +256,11 @@ textarea.ics-input {
   border-color: var(--accent);
 }
 
+.tag.range {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
 .rrule-edit {
   margin-top: 8px;
   display: flex;
@@ -321,6 +326,10 @@ textarea.ics-input {
 
 .dot.override {
   background: var(--override);
+}
+
+.dot.range {
+  background: var(--warn);
 }
 
 .dot.cancelled {

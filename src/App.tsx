@@ -170,7 +170,7 @@ export default function App() {
       setSelection({
         instanceKey: instanceId(inst),
         seriesId: inst.seriesId,
-        overrideId: inst.override?.id ?? null,
+        overrideId: inst.override?.id ?? inst.rangeOverride?.id ?? null,
         conflictRanges: peers.map((p) => ({
           start: p.overrideRange?.start ?? p.masterRange.start,
           end: p.overrideRange?.end ?? p.masterRange.end,
@@ -212,7 +212,7 @@ export default function App() {
       setSelection({
         instanceKey: instanceId(focus),
         seriesId: focus.seriesId,
-        overrideId: focus.override?.id ?? null,
+        overrideId: focus.override?.id ?? focus.rangeOverride?.id ?? null,
         conflictRanges: peers.map((p) => ({
           start: p.overrideRange?.start ?? p.masterRange.start,
           end: p.overrideRange?.end ?? p.masterRange.end,

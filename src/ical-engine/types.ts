@@ -70,6 +70,13 @@ export interface OverrideEvent {
   description: string;
   status: string;
   cancelled: boolean;
+  /** RECURRENCE-ID;RANGE=THISANDFUTURE：作用于该次及后续全部实例的范围例外 */
+  range: boolean;
+  /**
+   * 范围例外的墙钟位移秒数：DTSTART 墙钟 − RECURRENCE-ID 墙钟（按事件声明时区的
+   * 墙钟空间计算，与 DST 无关）。受影响实例的新起点 = 原始墙钟 + 该位移。
+   */
+  rangeDeltaSec: number;
 }
 
 export interface ParsedCalendar {
@@ -122,6 +129,11 @@ export interface Instance {
   /** 是否由被停用的例外覆盖（显示为"原实例"） */
   overrideDisabled: boolean;
   override?: OverrideEvent;
+  /**
+   * 作用于该实例的 THISANDFUTURE 范围例外（原始 key ≥ 例外锚点）：
+   * 起点按声明时区墙钟位移，时长/标题/地点/状态随该例外延续。
+   */
+  rangeOverride?: OverrideEvent;
   /** 所属规则（主组件）行范围 */
   masterRange: LineRange;
   /** 定位用：RRULE 行 / RDATE 行 / EXDATE 行 / RECURRENCE-ID 行 */

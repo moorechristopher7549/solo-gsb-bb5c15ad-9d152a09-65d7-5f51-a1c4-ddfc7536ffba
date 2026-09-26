@@ -294,6 +294,15 @@ export function InstanceTable({
                           例外已停用
                         </span>
                       )}
+                      {inst.rangeOverride && (
+                        <span
+                          className="tag range"
+                          style={{ marginLeft: 6 }}
+                          title="受 RECURRENCE-ID;RANGE=THISANDFUTURE 范围例外影响：起点按声明时区墙钟位移，时长/标题/地点/状态随该例外延续"
+                        >
+                          范围例外
+                        </span>
+                      )}
                       {inst.orphan && (
                         <span className="tag" style={{ marginLeft: 6 }}>
                           孤立覆盖

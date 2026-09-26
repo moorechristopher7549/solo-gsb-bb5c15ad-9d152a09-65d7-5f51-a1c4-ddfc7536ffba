@@ -94,7 +94,56 @@ if (!container.textContent?.includes('当前范围内没有有效改动')) {
 }
 console.log('✓ 恢复后差异立即清空（重算）');
 
+// 6) 范围例外（RANGE=THISANDFUTURE）：示例中 3/23 起的站会被位移到 09:45 会议室 C
+const tableText = (): string =>
+  container.querySelector('.instance-table')?.textContent ?? '';
+const visibleTab = byText('.tabs button', '生效实例') as HTMLElement;
+await act(async () => visibleTab.click());
+if (!tableText().includes('范围例外')) {
+  throw new Error('生效实例表应标注范围例外调整的实例');
+}
+if (!tableText().includes('会议室 C')) {
+  throw new Error('范围例外应将后续实例的地点延续为会议室 C');
+}
+console.log('✓ 范围例外生效：实例表标注「范围例外」且地点延续');
+
+// 7) 停用范围例外：受影响实例回到基础序列（09:00 会议室 A），差异出现
+const rangeCb = ([...container.querySelectorAll('.override-item input[type="checkbox"]')] as HTMLInputElement[])
+  .find((c) => c.closest('.override-item')?.textContent?.includes('范围'));
+if (!rangeCb) throw new Error('找不到范围例外勾选框');
+await act(async () => {
+  rangeCb.click();
+});
+await act(async () => {});
+if (tableText().includes('范围例外')) {
+  throw new Error('停用范围例外后不应再有范围调整实例');
+}
+// 会议室 C 只由范围例外引入，停用后应从实例表消失
+if (tableText().includes('会议室 C')) {
+  throw new Error('停用范围例外后会议室 C 不应再出现');
+}
+await act(async () => impactTab.click());
+if (container.textContent?.includes('当前范围内没有有效改动')) {
+  throw new Error('停用范围例外后应出现差异');
+}
+const rangeDiffs = container.querySelectorAll('.diff-row');
+if (rangeDiffs.length === 0) throw new Error('停用范围例外后应至少有一条差异行');
+console.log(`✓ 停用范围例外后实例回到基础序列，出现 ${rangeDiffs.length} 条差异`);
+
+// 8) 重新启用范围例外：差异清空，范围调整恢复
+await act(async () => {
+  rangeCb.click();
+});
+await act(async () => {});
+await act(async () => impactTab.click());
+if (!container.textContent?.includes('当前范围内没有有效改动')) {
+  throw new Error('重新启用范围例外后差异应清空');
+}
+console.log('✓ 重新启用范围例外后差异清空（回到范围状态）');
+
 root.unmount();
 console.log('✓ DOM 集成验证全部通过');
+// jsdom 的定时器会让事件循环保持存活，显式退出
+process.exit(0);
 
 })();
