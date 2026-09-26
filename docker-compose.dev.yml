@@ -1,0 +1,11 @@
+# 开发模式：Vite HMR 热更新
+services:
+  recur-inspector-dev:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./:/app
+      - /app/node_modules

@@ -1,0 +1,27 @@
+{
+  "name": "recur-inspector",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "本地运行的 iCalendar 重复日程校验台",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host",
+    "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/smoke.mjs --log-level=warning && node node_modules/.cache/smoke.mjs"
+  },
+  "dependencies": {
+    "ical.js": "^2.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "esbuild": "^0.21.5",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  }
+}
