@@ -758,5 +758,352 @@ END:VCALENDAR
   }
 }
 
+// ================= RECURRENCE-ID;RANGE=THISANDFUTURE =================
+{
+  const RANGE_ICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test-Range//
+BEGIN:VTIMEZONE
+TZID:America/New_York
+BEGIN:DAYLIGHT
+TZOFFSETFROM:-0500
+TZOFFSETTO:-0400
+TZNAME:EDT
+DTSTART:19700308T020000
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU
+END:DAYLIGHT
+BEGIN:STANDARD
+TZOFFSETFROM:-0400
+TZOFFSETTO:-0500
+TZNAME:EST
+DTSTART:19701101T020000
+RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:rng@x
+SUMMARY:Range base
+LOCATION:R-Base
+DTSTART;TZID=America/New_York:20260302T090000
+DTEND;TZID=America/New_York:20260302T100000
+RRULE:FREQ=DAILY;COUNT=10
+EXDATE;TZID=America/New_York:20260307T090000
+RDATE;TZID=America/New_York:20260315T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:rng@x
+SUMMARY:Range R1 +1h 30min
+LOCATION:R-One
+DTSTART;TZID=America/New_York:20260305T100000
+DTEND;TZID=America/New_York:20260305T103000
+RECURRENCE-ID;TZID=America/New_York;RANGE=THISANDFUTURE:20260305T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:rng@x
+SUMMARY:Range R2 11:00 60min
+LOCATION:R-Two
+DTSTART;TZID=America/New_York:20260309T110000
+DTEND;TZID=America/New_York:20260309T120000
+RECURRENCE-ID;TZID=America/New_York;RANGE=THISANDFUTURE:20260309T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:rng@x
+SUMMARY:Single explicit 3/6 15:00
+LOCATION:R-Single
+DTSTART;TZID=America/New_York:20260306T150000
+DTEND;TZID=America/New_York:20260306T160000
+RECURRENCE-ID;TZID=America/New_York:20260306T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:rng-cancel@x
+SUMMARY:Cancel base
+LOCATION:R-Cancel
+DTSTART;TZID=America/New_York:20260302T090000
+DTEND;TZID=America/New_York:20260302T100000
+RRULE:FREQ=DAILY;COUNT=5
+END:VEVENT
+BEGIN:VEVENT
+UID:rng-cancel@x
+SUMMARY:Cancelled from 3/4 on
+STATUS:CANCELLED
+DTSTART;TZID=America/New_York:20260304T090000
+DTEND;TZID=America/New_York:20260304T100000
+RECURRENCE-ID;TZID=America/New_York;RANGE=THISANDFUTURE:20260304T090000
+END:VEVENT
+BEGIN:VEVENT
+UID:rng-allday@x
+SUMMARY:All-day base
+DTSTART;VALUE=DATE:20260401
+DTEND;VALUE=DATE:20260402
+RRULE:FREQ=DAILY;COUNT=3
+END:VEVENT
+BEGIN:VEVENT
+UID:rng-allday@x
+SUMMARY:All-day shifted +1 day
+DTSTART;VALUE=DATE:20260403
+DTEND;VALUE=DATE:20260404
+RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20260402
+END:VEVENT
+BEGIN:VEVENT
+UID:rng-neg@x
+SUMMARY:Neg base
+DTSTART:20260310T120000Z
+DTEND:20260310T130000Z
+RRULE:FREQ=DAILY;COUNT=5
+END:VEVENT
+BEGIN:VEVENT
+UID:rng-neg@x
+SUMMARY:Neg shifted -1 day
+DTSTART:20260311T120000Z
+DTEND:20260311T130000Z
+RECURRENCE-ID;RANGE=THISANDFUTURE:20260312T120000Z
+END:VEVENT
+END:VCALENDAR
+`;
+
+  const rp = parseCalendar(RANGE_ICS);
+  assert.ok(!('fatal' in rp), 'range sample parses');
+  if ('fatal' in rp) process.exit(1);
+  const rng = rp.masters.find((m) => m.uid === 'rng@x')!;
+  assert.strictEqual(rng.overrides.length, 3, 'three overrides grouped');
+  const r1 = rng.overrides.find((o) => o.summary.includes('R1'))!;
+  const r2 = rng.overrides.find((o) => o.summary.includes('R2'))!;
+  const single = rng.overrides.find((o) => o.summary.includes('Single'))!;
+  assert.ok(r1.isRange && r2.isRange && !single.isRange, 'range flags parsed');
+  assert.strictEqual(r1.wallDeltaSec, 3600, 'R1 wall delta +1h');
+  assert.strictEqual(r2.wallDeltaSec, 7200, 'R2 wall delta +2h');
+  assert.notStrictEqual(r1.id, single.id, 'range id distinct from single id');
+
+  const rRange = rangeFor('2026-03-01', '2026-03-20');
+  const rx = expandAll(rp.masters, rRange, { disabledOverrides: new Set(), editedRrule: {} });
+  const at = (sec: number) => rx.instances.find((i) => i.uid === 'rng@x' && i.startUtc === sec);
+
+  // 范围例外之前：原样
+  const mar4 = at(utc(2026, 2, 4, 14))!; // 09:00 EST
+  assert.ok(mar4, 'Mar 4 base instance');
+  assert.strictEqual(mar4.source, 'rrule', 'before range key: untouched');
+  assert.strictEqual(mar4.location, 'R-Base');
+
+  // R1 生效：3/5 起 +1h 墙钟、时长 30 分钟、标题/地点延续
+  const mar5 = at(utc(2026, 2, 5, 15))!; // 10:00 EST
+  assert.ok(mar5, 'Mar 5 shifted to 10:00 EST');
+  assert.strictEqual(mar5.source, 'range');
+  assert.strictEqual(mar5.summary, 'Range R1 +1h 30min');
+  assert.strictEqual(mar5.location, 'R-One');
+  assert.strictEqual(mar5.endUtc - mar5.startUtc, 1800, 'range duration inherited (30min)');
+  assert.strictEqual(mar5.localClock, '10:00', 'wall clock shifted');
+  assert.strictEqual(mar5.recurrenceKey, utc(2026, 2, 5, 14), 'identity keeps original key');
+  assert.strictEqual(mar5.override?.id, r1.id, 'instance references the range override');
+
+  // 显式单次例外优先于范围调整：3/6 在 15:00（而非 R1 的 10:00）
+  const mar6 = at(utc(2026, 2, 6, 20))!; // 15:00 EST
+  assert.ok(mar6, 'single override wins on Mar 6');
+  assert.strictEqual(mar6.source, 'override');
+  assert.strictEqual(mar6.location, 'R-Single');
+  assert.ok(!at(utc(2026, 2, 6, 15)), 'range-adjusted 10:00 replaced by explicit single');
+
+  // EXDATE 仍按原始 key 排除：3/7 虽在 R1 范围内仍被排除
+  assert.ok(
+    !rx.instances.some((i) => i.uid === 'rng@x' && i.startUtc >= utc(2026, 2, 7, 0) && i.startUtc < utc(2026, 2, 8, 0)),
+    'EXDATE removes Mar 7 by original key even inside range'
+  );
+  assert.ok(
+    rx.excluded.some((i) => i.uid === 'rng@x' && i.startUtc === utc(2026, 2, 7, 14)),
+    'excluded audit row keeps original time'
+  );
+
+  // 跨 DST 墙钟位移：3/8 已入 EDT，10:00 EDT = 14:00Z（墙钟 +1h，而非 UTC +1h）
+  const mar8 = at(utc(2026, 2, 8, 14))!;
+  assert.ok(mar8, 'Mar 8 shifted across DST');
+  assert.strictEqual(mar8.localClock, '10:00', 'wall delta constant across DST');
+  assert.strictEqual(mar8.utcOffsetSec, -4 * 3600, 'EDT offset after spring-forward');
+
+  // 多个范围例外按原始 key 顺序生效，后者覆盖前者（不叠加）：3/9 起 11:00（非 10:00/12:00）
+  const mar9 = at(utc(2026, 2, 9, 15))!; // 11:00 EDT
+  assert.ok(mar9, 'Mar 9 at 11:00 EDT');
+  assert.strictEqual(mar9.location, 'R-Two', 'later range override wins');
+  assert.strictEqual(mar9.endUtc - mar9.startUtc, 3600, 'R2 duration 60min');
+  assert.strictEqual(mar9.recurrenceKey, utc(2026, 2, 9, 13), 'original key 09:00 EDT');
+  assert.ok(!at(utc(2026, 2, 9, 14)) && !at(utc(2026, 2, 9, 16)), 'no 10:00 (R1) or 12:00 (cumulative)');
+  const mar11 = at(utc(2026, 2, 11, 15))!;
+  assert.ok(mar11 && mar11.location === 'R-Two', 'R2 persists for later instances');
+
+  // RDATE 实例同样按原始 key 落入范围：3/15 09:00 → 11:00 EDT
+  const mar15 = at(utc(2026, 2, 15, 15))!;
+  assert.ok(mar15, 'RDATE instance shifted by R2');
+  assert.strictEqual(mar15.source, 'range');
+  assert.strictEqual(mar15.recurrenceKey, utc(2026, 2, 15, 13), 'RDATE identity = original key');
+
+  // 停用 R2：相应实例回到前一范围状态（R1）
+  const rxNoR2 = expandAll(rp.masters, rRange, {
+    disabledOverrides: new Set([r2.id]),
+    editedRrule: {},
+  });
+  const back9 = rxNoR2.instances.find((i) => i.uid === 'rng@x' && i.recurrenceKey === utc(2026, 2, 9, 13))!;
+  assert.ok(back9, 'Mar 9 instance still present with R2 disabled');
+  assert.strictEqual(back9.startUtc, utc(2026, 2, 9, 14), 'falls back to R1: 10:00 EDT');
+  assert.strictEqual(back9.location, 'R-One', 'falls back to R1 fields');
+  assert.strictEqual(back9.endUtc - back9.startUtc, 1800, 'falls back to R1 duration');
+
+  // 停用 R1（R2 仍在）：[R1,R2) 区间回到主事件状态，R2 区间不受影响
+  const rxNoR1 = expandAll(rp.masters, rRange, {
+    disabledOverrides: new Set([r1.id]),
+    editedRrule: {},
+  });
+  const base5 = rxNoR1.instances.find((i) => i.uid === 'rng@x' && i.recurrenceKey === utc(2026, 2, 5, 14))!;
+  assert.strictEqual(base5.startUtc, utc(2026, 2, 5, 14), 'R1 disabled: Mar 5 back to 09:00');
+  assert.strictEqual(base5.location, 'R-Base');
+  const still9 = rxNoR1.instances.find((i) => i.uid === 'rng@x' && i.recurrenceKey === utc(2026, 2, 9, 13))!;
+  assert.strictEqual(still9.startUtc, utc(2026, 2, 9, 15), 'R2 still applies from its own key');
+
+  // 全部停用：回到主事件（单次例外与 EXDATE 不受影响）
+  const rxNone = expandAll(rp.masters, rRange, {
+    disabledOverrides: new Set([r1.id, r2.id]),
+    editedRrule: {},
+  });
+  const plain9 = rxNone.instances.find((i) => i.uid === 'rng@x' && i.recurrenceKey === utc(2026, 2, 9, 13))!;
+  assert.strictEqual(plain9.startUtc, utc(2026, 2, 9, 13), 'all ranges disabled: 09:00 EDT');
+  assert.ok(
+    rxNone.instances.some((i) => i.uid === 'rng@x' && i.startUtc === utc(2026, 2, 6, 20)),
+    'single override unaffected by range toggles'
+  );
+
+  // 停用单次例外：该次回落到范围调整结果（而非主事件原样）
+  const rxNoSingle = expandAll(rp.masters, rRange, {
+    disabledOverrides: new Set([single.id]),
+    editedRrule: {},
+  });
+  const back6 = rxNoSingle.instances.find((i) => i.uid === 'rng@x' && i.recurrenceKey === utc(2026, 2, 6, 14))!;
+  assert.ok(back6, 'Mar 6 present with single override disabled');
+  assert.strictEqual(back6.startUtc, utc(2026, 2, 6, 15), 'falls back to range-adjusted 10:00 EST');
+  assert.strictEqual(back6.source, 'range', 'range state revealed under disabled single');
+  assert.ok(back6.overrideDisabled, 'marked as override-disabled');
+
+  // 变更影响：停用 R2 是“移动/字段变化”，不是一删一增
+  const rngBaseline = expandAll(rp.masters, rRange, { disabledOverrides: new Set(), editedRrule: {} });
+  const rngChanges = diffInstances(rngBaseline.instances, rxNoR2.instances);
+  const ch9 = rngChanges.filter((c) => c.identity === `rng@x#${utc(2026, 2, 9, 13)}`);
+  assert.strictEqual(ch9.length, 1, 'one change entry for Mar 9 identity');
+  assert.ok(ch9[0].before && ch9[0].after, 'range fallback is a modification');
+  assert.ok(ch9[0].kinds.includes('start-moved') && ch9[0].kinds.includes('location'), 'moved + location');
+  assert.ok(
+    !rngChanges.some((c) => (c.kinds[0] === 'added' || c.kinds[0] === 'removed') && c.uid === 'rng@x'),
+    'range toggle never reports add/remove for shifted identities'
+  );
+
+  // CANCELLED 范围例外：该次及后续全部取消
+  const cancelVisible = rx.instances.filter((i) => i.uid === 'rng-cancel@x');
+  assert.strictEqual(cancelVisible.length, 2, 'only Mar 2-3 visible');
+  const cancelAudit = rx.cancelled.filter((i) => i.uid === 'rng-cancel@x');
+  assert.strictEqual(cancelAudit.length, 3, 'Mar 4-6 cancelled by range');
+  assert.ok(cancelAudit.every((i) => i.source === 'range' && i.cancelled), 'cancelled rows carry range source');
+  const cancelMaster = rp.masters.find((m) => m.uid === 'rng-cancel@x')!;
+  const cancelRov = cancelMaster.overrides[0];
+  const rxUncancel = expandAll(rp.masters, rRange, {
+    disabledOverrides: new Set([cancelRov.id]),
+    editedRrule: {},
+  });
+  assert.strictEqual(
+    rxUncancel.instances.filter((i) => i.uid === 'rng-cancel@x').length,
+    5,
+    'disabling cancelled range restores all instances'
+  );
+
+  // 全天事件范围例外：+1 天墙钟位移
+  const ad = rp.masters.find((m) => m.uid === 'rng-allday@x')!;
+  assert.strictEqual(ad.overrides[0].wallDeltaSec, 86400, 'all-day wall delta is whole days');
+  const adRange = { startUtc: utc(2026, 2, 30, 0), endUtc: utc(2026, 3, 10, 0) };
+  const adx = expandAll(rp.masters, adRange, { disabledOverrides: new Set(), editedRrule: {} });
+  const adDays = adx.instances
+    .filter((i) => i.uid === 'rng-allday@x')
+    .map((i) => i.startUtc)
+    .sort((a, b) => a - b);
+  assert.deepStrictEqual(
+    adDays,
+    [utc(2026, 3, 1, 0), utc(2026, 3, 3, 0), utc(2026, 3, 4, 0)],
+    'all-day occurrences shifted +1 day from Apr 2 on'
+  );
+
+  // 规范化导出：保留生效的 RANGE 组件；停用后省略
+  const normR = normalizeCalendar(rp, { disabledOverrides: new Set(), editedRrule: {} });
+  assert.strictEqual(
+    (normR.ics.match(/RANGE=THISANDFUTURE/g) || []).length,
+    5,
+    'export keeps all enabled RANGE components'
+  );
+  const normR2 = normalizeCalendar(rp, { disabledOverrides: new Set([r2.id]), editedRrule: {} });
+  assert.strictEqual(
+    (normR2.ics.match(/RANGE=THISANDFUTURE/g) || []).length,
+    4,
+    'disabled range override omitted from export'
+  );
+  const reR = parseCalendar(normR.ics);
+  assert.ok(!('fatal' in reR), 'normalized range output reparses');
+
+  // 窗口边界：原起点在窗外、墙钟位移后落入窗内的实例必须被收集（正向）
+  // 3/11 原实例 09:00 EDT=13:00Z（+1h 后 14:00Z 恰为窗口起点，按原时刻会被漏收），R2 位移后 15:00Z 落入窗内
+  const edgeX = expandAll(
+    rp.masters,
+    { startUtc: utc(2026, 2, 11, 14), endUtc: utc(2026, 2, 12, 14) },
+    { disabledOverrides: new Set(), editedRrule: {} }
+  );
+  assert.ok(
+    edgeX.instances.some((i) => i.uid === 'rng@x' && i.startUtc === utc(2026, 2, 11, 15)),
+    'instance shifted into window from the left is collected'
+  );
+
+  // 负向位移：原起点在窗口右侧、位移后落入窗内
+  const negMaster = rp.masters.find((m) => m.uid === 'rng-neg@x')!;
+  assert.strictEqual(negMaster.overrides[0].wallDeltaSec, -86400, 'negative wall delta parsed');
+  const negX = expandAll(
+    rp.masters,
+    { startUtc: utc(2026, 2, 10, 0), endUtc: utc(2026, 2, 12, 13) },
+    { disabledOverrides: new Set(), editedRrule: {} }
+  );
+  const negInsts = negX.instances.filter((i) => i.uid === 'rng-neg@x');
+  assert.ok(
+    negInsts.some((i) => i.recurrenceKey === utc(2026, 2, 13, 12) && i.startUtc === utc(2026, 2, 12, 12)),
+    'instance shifted into window from the right is collected'
+  );
+  assert.ok(
+    negInsts.some((i) => i.recurrenceKey === utc(2026, 2, 12, 12) && i.startUtc === utc(2026, 2, 11, 12)),
+    'negative shift moves 3/12 occurrence to 3/11'
+  );
+
+  // 孤立范围例外：展开窗内未影响任何实例 → 提示
+  const ORPHAN_ICS = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Test-Range-Orphan//
+BEGIN:VEVENT
+UID:orphan@x
+SUMMARY:Short
+DTSTART:20260301T090000Z
+DTEND:20260301T100000Z
+RRULE:FREQ=DAILY;COUNT=2
+END:VEVENT
+BEGIN:VEVENT
+UID:orphan@x
+SUMMARY:Range beyond end
+DTSTART:20260401T100000Z
+DTEND:20260401T110000Z
+RECURRENCE-ID;RANGE=THISANDFUTURE:20260401T090000Z
+END:VEVENT
+END:VCALENDAR
+`;
+  const op = parseCalendar(ORPHAN_ICS);
+  assert.ok(!('fatal' in op), 'orphan range sample parses');
+  if (!('fatal' in op)) {
+    const ox = expandAll(op.masters, { startUtc: utc(2026, 2, 1, 0), endUtc: utc(2026, 2, 31, 0) }, {
+      disabledOverrides: new Set(),
+      editedRrule: {},
+    });
+    assert.strictEqual(ox.instances.length, 2, 'orphan range changes nothing');
+    assert.ok(
+      ox.warnings.some((w) => w.text.includes('未影响任何实例')),
+      'orphan range override reported'
+    );
+  }
+}
+
 console.log('✓ all engine smoke tests passed');
 console.log(`  instances=${expanded.instances.length} cancelled=${expanded.cancelled.length} excluded=${expanded.excluded.length} conflictGroups=${conflicts.groups.length}`);

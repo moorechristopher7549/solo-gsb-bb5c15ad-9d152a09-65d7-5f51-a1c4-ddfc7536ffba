@@ -133,12 +133,15 @@ export function SeriesPanel({
                   }
                   onClick={() => !off && onFocusOverride(ov)}
                 >
-                  <span className={`dot ${ov.cancelled ? 'cancelled' : 'override'}`} />
+                  <span
+                    className={`dot ${ov.cancelled ? 'cancelled' : ov.isRange ? 'range' : 'override'}`}
+                  />
                   <label
                     className="oi-main"
                     onClick={(e) => {
+                      // 只阻止冒泡（避免触发例外定位）；勾选切换由 checkbox 的 onChange 统一处理，
+                      // label 的激活行为会把点击转发到 checkbox，保证任意位置点击只切换一次
                       e.stopPropagation();
-                      onToggleOverride(ov.id);
                     }}
                     title={off ? '勾选以重新启用该例外' : '取消勾选以停用该例外（恢复原实例）'}
                   >
@@ -147,12 +150,18 @@ export function SeriesPanel({
                       checked={!off}
                       onChange={() => onToggleOverride(ov.id)}
                     />{' '}
-                    {ov.cancelled ? 'CANCELLED' : '覆盖'} ·{' '}
-                    {formatWall(Math.round(ov.recurrenceId.toUnixTime()), tzidOf(m), ov.isAllDay)} ·{' '}
-                    {ov.summary}
+                    {ov.cancelled ? 'CANCELLED' : ov.isRange ? '范围例外' : '覆盖'} ·{' '}
+                    {formatWall(Math.round(ov.recurrenceId.toUnixTime()), tzidOf(m), ov.isAllDay)}
+                    {ov.isRange ? ' 起' : ''} · {ov.summary}
+                    {ov.isRange && (
+                      <span className="tag" style={{ marginLeft: 6 }} title="THISANDFUTURE：该次及后续实例按墙钟位移平移">
+                        {deltaLabel(ov.wallDeltaSec)}
+                      </span>
+                    )}
                     <div className="oi-line">
                       L{ov.block.range.start}–{ov.block.range.end}（RECURRENCE-ID L
                       {ov.block.propLines['RECURRENCE-ID']?.[0] ?? '?'}）
+                      {ov.isRange && ' · 停用后回到前一范围状态'}
                     </div>
                   </label>
                 </div>
@@ -171,6 +180,22 @@ function freqOf(m: MasterSeries): string {
   return `${r.freq}${r.interval > 1 ? `×${r.interval}` : ''}${r.count ? `;COUNT=${r.count}` : ''}${
     r.until ? `;UNTIL=${r.until.toString()}` : ''
   }`;
+}
+
+/** 范围例外的墙钟位移标签，如「位移 +1 小时 30 分」 */
+function deltaLabel(sec: number): string {
+  if (sec === 0) return '位移 0';
+  const sign = sec > 0 ? '+' : '−';
+  const a = Math.abs(sec);
+  const parts: string[] = [];
+  const d = Math.floor(a / 86400);
+  const h = Math.floor((a % 86400) / 3600);
+  const m = Math.round((a % 3600) / 60);
+  if (d) parts.push(`${d} 天`);
+  if (h) parts.push(`${h} 小时`);
+  if (m) parts.push(`${m} 分`);
+  if (parts.length === 0) parts.push(`${a} 秒`);
+  return `位移 ${sign}${parts.join(' ')}`;
 }
 
 function tzidOf(m: MasterSeries): string | null {

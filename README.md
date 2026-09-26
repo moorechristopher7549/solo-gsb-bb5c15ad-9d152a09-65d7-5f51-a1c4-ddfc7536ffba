@@ -1,8 +1,8 @@
 # 📅 iCalendar 重复日程校验台（Recur Inspector）
 
 一款**完全本地运行**的 iCalendar（ICS）重复日程展开与校验工具。粘贴或导入包含
-`DTSTART`、`RRULE`、`RDATE`、`EXDATE`、`RECURRENCE-ID` 的日历文本，在指定日期范围内
-展开全部实例，验证例外覆盖、取消、跨夏令时（DST）本地时刻与 `LOCATION` 冲突，
+`DTSTART`、`RRULE`、`RDATE`、`EXDATE`、`RECURRENCE-ID`（含 `RANGE=THISANDFUTURE`）的日历文本，
+在指定日期范围内展开全部实例，验证例外覆盖、取消、跨夏令时（DST）本地时刻与 `LOCATION` 冲突，
 并可交互式停用例外、修改规则后实时重算，最终导出规范化 ICS。
 
 - **技术栈**：React 18 + TypeScript + Vite 5 + [ical.js](https://github.com/kewisch/ical.js) 2.x
@@ -14,6 +14,7 @@
 | --- | --- |
 | 重复展开 | RRULE（FREQ/INTERVAL/COUNT/UNTIL/BYxxx）、RDATE（含 PERIOD）、EXDATE、单次事件 |
 | 例外覆盖 | `RECURRENCE-ID` 子事件**替换**对应原实例；改时间/地点/时长均以例外为准 |
+| 范围例外 | `RECURRENCE-ID;RANGE=THISANDFUTURE`：以原始 recurrence key 划定影响范围，按声明时区**墙钟位移**平移该次及后续实例起点，并延续范围例外的时长/标题/地点/状态；多条范围例外按原始 key 顺序生效、后者覆盖前者 |
 | 取消隐藏 | `STATUS:CANCELLED` 的实例不进入生效列表，只在「已取消」审计页留痕 |
 | 跨 DST | 在事件**声明的 TZID 墙钟空间**迭代，墙钟时刻恒定，UTC 随偏移自动平移并标注 DST |
 | 缺失时区兜底 | ICS 未携带 VTIMEZONE 时，用浏览器 `Intl` 时区数据库自动合成（含 DST 切换点） |
@@ -69,7 +70,7 @@ npm run dev        # http://localhost:5173
 ```bash
 npm run build      # 类型检查 + 生产构建到 dist/
 npm run preview    # 本地预览生产构建 http://localhost:4173
-npm run smoke      # 引擎语义冒烟测试（RRULE/RDATE/EXDATE/覆盖/取消/DST/冲突/空闲窗口/导出）
+npm run smoke      # 引擎语义冒烟测试（RRULE/RDATE/EXDATE/覆盖/范围例外/取消/DST/冲突/空闲窗口/导出）
 ```
 
 ## 使用指引
@@ -101,6 +102,18 @@ npm run smoke      # 引擎语义冒烟测试（RRULE/RDATE/EXDATE/覆盖/取消
   普通 RRULE/RDATE/单次实例取原始起点）。覆盖改期后两侧身份仍相同，只标记开始/结束移动；
   仅候选侧存在标为新增，仅原始侧存在标为移除。比对只纳入当前查询范围内的生效实例，
   已取消 / 已排除的审计行不参与。
+- **范围例外（THISANDFUTURE）**：
+  - 影响范围按**原始 recurrence key** 判定：原始起点 ≥ 范围例外 RECURRENCE-ID 的所有实例
+    （RRULE / RDATE 均可）被调整，与展开窗、时区偏移无关。
+  - 起点位移 = 范围例外 `DTSTART` 墙钟 − `RECURRENCE-ID` 墙钟（均取声明时区的日期/钟点字段），
+    应用到每个实例自身的墙钟后再按当日真实偏移折回 UTC——跨 DST 时墙钟位移恒定，UTC 位移随之变化。
+  - 时长、标题、地点、状态（含 `STATUS:CANCELLED`，此时该次及后续全部取消）延续范围例外。
+  - 多条范围例外按原始 key 排序生效，**后者覆盖前者**（位移不叠加）；停用某条后，
+    相应实例自动回到前一条生效范围例外（或主事件）的状态。
+  - `EXDATE` 仍按**原始 key** 排除（被排除的实例不再参与位移）；**显式单次例外优先于范围调整**
+    （该次以单次例外为准，停用单次例外后回落到范围调整结果）。
+  - 实例身份仍为原始 recurrence key：停用/启用范围例外在「变更影响」中呈现为移动与字段变化，
+    不会被误报成一删一增；规范化导出保留生效的 RANGE 组件（停用的不导出）。
 - **时间匹配**：EXDATE/RECURRENCE-ID 按绝对时刻匹配（DATE 型按当天 00:00）。
   请保证它们与 DTSTART 的时区形式一致（同为 `TZID=` 或同为 UTC `Z`）。
 - **RDATE-PERIOD**：使用 PERIOD 自带的结束时间反推该实例时长。
@@ -122,7 +135,6 @@ npm run smoke      # 引擎语义冒烟测试（RRULE/RDATE/EXDATE/覆盖/取消
   - 每日工作时段为同一本地日内的墙钟区间，暂不支持跨午夜；日期范围上限一年。
 - **合成 VTIMEZONE**：基于展开时间窗（DTSTART/UNTIL 年份前后取余量）探测 DST 切换点，
   仅保证窗内精确；导出的 ICS 建议在目标日历客户端复验。
-- 暂不支持 `RECURRENCE-ID;RANGE=THISANDFUTURE`（按单实例覆盖处理并给出告警）。
 
 ## 目录结构
 
@@ -131,7 +143,7 @@ src/
 ├── ical-engine/
 │   ├── parser.ts       # 折行还原、行号索引、两遍解析（先注册时区再取值）、主子归组
 │   ├── timezones.ts    # Intl 探测 DST 切换点，合成 VTIMEZONE
-│   ├── expansion.ts    # RRULE 迭代 + RDATE/EXDATE/覆盖/取消 + 范围与上限
+│   ├── expansion.ts    # RRULE 迭代 + RDATE/EXDATE/覆盖/取消 + THISANDFUTURE 范围例外 + 范围与上限
 │   ├── conflicts.ts    # LOCATION 维度半开区间重叠检测
 │   ├── free-windows.ts # 空闲窗口：跨日裁剪（真实 DST 日界）+ 忙碌区间合并 + 相邻事件
 │   ├── diff.ts         # 变更影响：UID+原始 recurrence key 身份比对（新增/移除/移动/字段）

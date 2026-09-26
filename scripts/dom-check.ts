@@ -5,7 +5,8 @@ import { act } from 'react-dom/test-utils';
 import App from '../src/App';
 
 ;(async () => {
-// 临时 DOM 集成验证：挂载 App，切换到“变更影响”页签，验证空状态 / 停用例外后的差异行 / 点击联动。
+// 临时 DOM 集成验证：挂载 App，切换到“变更影响”页签，验证空状态 / 停用例外后的差异行 / 点击联动，
+// 以及 THISANDFUTURE 范围例外的停用回退与重新启用。
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
   url: 'http://localhost/',
@@ -93,6 +94,49 @@ if (!container.textContent?.includes('当前范围内没有有效改动')) {
   throw new Error('恢复例外后差异应清空');
 }
 console.log('✓ 恢复后差异立即清空（重算）');
+
+// 6) 范围例外（THISANDFUTURE）：停用 3/30 范围例外后，该次及后续实例回到前一范围状态
+const rangeItems = [...container.querySelectorAll('.override-item')].filter((el) =>
+  el.textContent?.includes('范围例外')
+);
+if (rangeItems.length < 2) throw new Error('示例应包含至少两条范围例外');
+const r2Item = rangeItems.find((el) => el.textContent?.includes('3/30')) as HTMLElement;
+const r2Cb = r2Item.querySelector('input[type="checkbox"]') as HTMLInputElement;
+await act(async () => {
+  r2Cb.click();
+});
+await act(async () => {});
+await act(async () => impactTab.click());
+const rangeDiffs = container.querySelectorAll('.diff-row');
+if (rangeDiffs.length < 2) throw new Error('停用范围例外后应出现多条差异（该次及后续实例）');
+const rangeLabels = container.textContent ?? '';
+if (!/开始移动/.test(rangeLabels)) throw new Error('范围回退应标记为开始移动而非一删一增');
+await act(async () => {
+  (byText('.tabs button', '生效实例') as HTMLElement).click();
+});
+const syncRows = [...container.querySelectorAll('tr.instance-row')].filter((el) =>
+  el.textContent?.includes('周进度同步')
+);
+const syncText = syncRows.map((el) => el.textContent ?? '').join('\n');
+if (!syncText.includes('15:30')) {
+  throw new Error('停用 3/30 范围例外后，相应实例应回到前一范围状态（15:30）');
+}
+// 行内起始时刻形如「2026-03-30 16:00至」；16:00 作为结束时刻（3/23 单次例外）是合法的
+if (/16:00至/.test(syncText)) {
+  throw new Error('停用后周进度同步实例不应再以 16:00 开始');
+}
+console.log(`✓ 停用范围例外后出现 ${rangeDiffs.length} 条差异，实例回到前一范围状态`);
+
+// 7) 重新启用范围例外，差异清空
+await act(async () => {
+  r2Cb.click();
+});
+await act(async () => {});
+await act(async () => impactTab.click());
+if (!container.textContent?.includes('当前范围内没有有效改动')) {
+  throw new Error('重新启用范围例外后差异应清空');
+}
+console.log('✓ 重新启用范围例外后差异清空');
 
 root.unmount();
 console.log('✓ DOM 集成验证全部通过');

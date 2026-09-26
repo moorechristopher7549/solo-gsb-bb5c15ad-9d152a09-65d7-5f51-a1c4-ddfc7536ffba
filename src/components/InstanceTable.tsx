@@ -49,6 +49,7 @@ const SOURCE_LABEL: Record<Instance['source'], string> = {
   rrule: 'RRULE',
   rdate: 'RDATE',
   override: '例外',
+  range: '范围例外',
   single: '单次',
 };
 

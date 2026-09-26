@@ -305,14 +305,7 @@ export function parseCalendar(raw: string): ParsedCalendar | { fatal: string } {
     const master = masterByUid.get(uid);
     const recurIdProp = comp.getFirstProperty('recurrence-id')!;
     const recurrenceId = recurIdProp.getFirstValue() as ICAL.Time;
-    if (recurIdProp.getFirstParameter('range')?.toUpperCase() === 'THISANDFUTURE') {
-      warn(
-        warnings,
-        'warn',
-        'RECURRENCE-ID 带 RANGE=THISANDFUTURE，当前版本按单实例覆盖处理。',
-        scan.propLines['RECURRENCE-ID']?.[0]
-      );
-    }
+    const isRange = recurIdProp.getFirstParameter('range')?.toUpperCase() === 'THISANDFUTURE';
     if (!master) {
       warn(
         warnings,
@@ -325,8 +318,17 @@ export function parseCalendar(raw: string): ParsedCalendar | { fatal: string } {
     const dtstart = (comp.getFirstPropertyValue('dtstart') as ICAL.Time | null) ?? recurrenceId;
     const durationSec = readDuration(comp, dtstart, master.durationSec);
     const dtendProp = comp.getFirstProperty('dtend');
+    if (isRange && dtstart.isDate !== recurrenceId.isDate) {
+      warn(
+        warnings,
+        'warn',
+        'RECURRENCE-ID;RANGE=THISANDFUTURE 与 DTSTART 的值类型（DATE/DATE-TIME）不一致，墙钟位移可能不符合预期。',
+        scan.propLines['RECURRENCE-ID']?.[0]
+      );
+    }
     const ov: OverrideEvent = {
-      id: `${uid}#${Math.round(recurrenceId.toUnixTime())}`,
+      // 范围例外与同一 recurrence key 的单次例外可共存，id 加后缀区分
+      id: `${uid}#${Math.round(recurrenceId.toUnixTime())}${isRange ? '#range' : ''}`,
       block: {
         component: comp,
         kind: 'vevent',
@@ -344,6 +346,8 @@ export function parseCalendar(raw: string): ParsedCalendar | { fatal: string } {
       description: stringOrEmpty(comp.getFirstPropertyValue('description')) || master.description,
       status: (stringOrEmpty(comp.getFirstPropertyValue('status')) || master.status).toUpperCase(),
       cancelled: (stringOrEmpty(comp.getFirstPropertyValue('status')) || '').toUpperCase() === 'CANCELLED',
+      isRange,
+      wallDeltaSec: isRange ? wallDeltaSeconds(recurrenceId, dtstart) : 0,
     };
     master.overrides.push(ov);
   }
@@ -378,6 +382,18 @@ export function parseCalendar(raw: string): ParsedCalendar | { fatal: string } {
 
 function stringOrEmpty(v: unknown): string {
   return v == null ? '' : String(v);
+}
+
+/**
+ * 墙钟位移（秒）：to 墙钟 − from 墙钟。
+ * 两侧均取声明时区下的日期/钟点字段按“朴素 UTC”求差，与具体 UTC 偏移无关，
+ * 因此同一位移应用到不同实例时，每个实例各自按自身日期的真实偏移折回 UTC（跨 DST 安全）。
+ */
+function wallDeltaSeconds(from: ICAL.Time, to: ICAL.Time): number {
+  const naive = (t: ICAL.Time): number =>
+    Date.UTC(t.year, t.month - 1, t.day, t.isDate ? 0 : t.hour, t.isDate ? 0 : t.minute, t.isDate ? 0 : t.second) /
+    1000;
+  return naive(to) - naive(from);
 }
 
 function readDuration(comp: ICAL.Component, dtstart: ICAL.Time, fallbackSec?: number): number {

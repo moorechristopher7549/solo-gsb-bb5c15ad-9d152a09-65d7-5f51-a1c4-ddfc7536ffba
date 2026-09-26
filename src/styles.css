@@ -323,6 +323,10 @@ textarea.ics-input {
   background: var(--override);
 }
 
+.dot.range {
+  background: var(--warn);
+}
+
 .dot.cancelled {
   background: var(--cancelled);
 }
@@ -429,6 +433,11 @@ tr.audit-row.cancelled td {
 .src-badge.override {
   color: var(--override);
   border-color: var(--override);
+}
+
+.src-badge.range {
+  color: var(--warn);
+  border-color: var(--warn);
 }
 
 .src-badge.single {

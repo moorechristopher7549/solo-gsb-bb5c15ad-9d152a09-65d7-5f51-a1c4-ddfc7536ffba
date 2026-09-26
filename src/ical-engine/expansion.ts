@@ -1,6 +1,8 @@
 // 重复实例展开引擎
 // 规则：RRULE 用 ical.js RecurExpansion（内部按 VTIMEZONE 处理 DST），
 // RDATE 并入，EXDATE 剔除，RECURRENCE-ID 覆盖替换，STATUS:CANCELLED 隐藏。
+// RECURRENCE-ID;RANGE=THISANDFUTURE 范围例外：以原始 recurrence key 判定影响范围，
+// 按声明时区墙钟位移调整该次及后续实例，并延续范围例外的时长/标题/地点/状态。
 // 跨 DST 时 RRULE 在“声明时区墙钟空间”迭代，墙钟时刻不变，UTC 自动平移。
 
 import ICAL from 'ical.js';
@@ -9,6 +11,7 @@ import type {
   ExpansionResult,
   Instance,
   MasterSeries,
+  OverrideEvent,
   Warning,
 } from './types';
 
@@ -128,6 +131,49 @@ function buildInstance(input: BuildInput): Instance {
 }
 
 /**
+ * 把实例起点按墙钟位移平移：先在声明时区还原墙钟字段，做朴素（日历）加减，
+ * 规范化后再按该时区当时的真实偏移折回 UTC。跨 DST 时墙钟位移量保持恒定，
+ * UTC 位移随两侧偏移差自动变化。
+ */
+function shiftWallClock(inst: Instance, deltaSec: number): ICAL.Time {
+  const t = ICAL.Time.epochTime.clone();
+  t.fromUnixTime(inst.startUtc);
+  let zoned = t;
+  if (inst.tzid && inst.tzid !== 'UTC') {
+    const zone = ICAL.TimezoneService.get(inst.tzid);
+    if (zone) zoned = t.convertToZone(zone);
+  }
+  zoned.addDuration(ICAL.Duration.fromSeconds(deltaSec));
+  zoned._normalize();
+  return zoned;
+}
+
+/**
+ * 应用范围例外（RANGE=THISANDFUTURE）到单个实例：
+ * 起点按墙钟位移平移，时长/标题/地点/状态延续范围例外；
+ * recurrenceKey 保持原始 key 不变（变更比对据此识别为“移动”而非一删一增）。
+ */
+function applyRangeOverride(inst: Instance, rov: OverrideEvent): Instance {
+  const shifted = shiftWallClock(inst, rov.wallDeltaSec);
+  const startUtc = Math.round(shifted.toUnixTime());
+  return {
+    ...inst,
+    key: startUtc,
+    startUtc,
+    endUtc: startUtc + rov.durationSec,
+    utcOffsetSec: offsetOf(shifted),
+    localClock: inst.isAllDay ? '全天' : clockOf(shifted),
+    summary: rov.summary,
+    location: rov.location,
+    status: rov.status,
+    source: 'range',
+    override: rov,
+    overrideRange: rov.block.range,
+    originLine: rov.block.propLines['RECURRENCE-ID']?.[0] ?? inst.originLine,
+  };
+}
+
+/**
  * 展开单个主事件序列。
  */
 function expandSeries(
@@ -166,6 +212,22 @@ function expandSeries(
     if (!base.has(inst.key)) base.set(inst.key, inst);
   };
 
+  // 生效的范围例外（按原始 key 升序）：既用于第 4 步的范围调整，
+  // 也用于放宽 RRULE 收集窗口——原起点在窗外、墙钟位移后落入窗内的实例不能被漏收。
+  const rangeOvs = master.overrides
+    .filter((ov) => ov.isRange && !state.disabledOverrides.has(ov.id))
+    .sort((a, b) => Math.round(a.recurrenceId.toUnixTime()) - Math.round(b.recurrenceId.toUnixTime()));
+  let collectStart = range.startUtc;
+  let collectEnd = range.endUtc;
+  if (rangeOvs.length > 0) {
+    // 墙钟位移折算成 UTC 时最多差一个时区偏移变化（26h 覆盖全球 −12…+14 的极端）；
+    // 起点侧再放宽范围例外的最大时长（时长也可能被延续）。
+    const shiftMargin = rangeOvs.reduce((m, ov) => Math.max(m, Math.abs(ov.wallDeltaSec)), 0) + 26 * 3600;
+    const maxRovDur = rangeOvs.reduce((m, ov) => Math.max(m, ov.durationSec), 0);
+    collectStart = range.startUtc - shiftMargin - maxRovDur;
+    collectEnd = range.endUtc + shiftMargin;
+  }
+
   // 1) RRULE 迭代（RecurIterator 保证 DTSTART 为首个候选，并在声明时区墙钟空间推进）
   if (rule) {
     let iter: ReturnType<ICAL.Recur['iterator']>;
@@ -187,8 +249,8 @@ function expandSeries(
       }
       const tSec = Math.round(t.toUnixTime());
       // 范围之前的实例（COUNT 规则也必须经过迭代计数）直接跳过
-      if (tSec + master.durationSec <= range.startUtc) continue;
-      if (tSec >= range.endUtc) {
+      if (tSec + master.durationSec <= collectStart) continue;
+      if (tSec >= collectEnd) {
         // 迭代时间单调递增：越过范围右端即可结束（规则结束时 next() 自然返回 null）
         break;
       }
@@ -253,8 +315,48 @@ function expandSeries(
     }
   }
 
-  // 4) 例外覆盖
+  // 4) 范围例外（RECURRENCE-ID;RANGE=THISANDFUTURE）：
+  // 以原始 recurrence key 判定影响范围（base 此刻仍以原始 key 索引），
+  // 多个范围例外按原始 key 排序，后者覆盖前者（位移不叠加）；
+  // 停用某条范围例外后，相应实例自动回到前一条生效范围例外（或主事件）的状态。
+  if (rangeOvs.length > 0) {
+    const rangeKeys = rangeOvs.map((ov) => Math.round(ov.recurrenceId.toUnixTime()));
+    const touched = new Set<string>();
+    for (const [key, inst] of [...base.entries()]) {
+      // 生效范围内最后一条（原始 key 最大且 <= 实例原始 key）范围例外
+      let pick = -1;
+      for (let i = 0; i < rangeKeys.length; i++) {
+        if (rangeKeys[i] <= key) pick = i;
+        else break;
+      }
+      if (pick < 0) continue;
+      const rov = rangeOvs[pick];
+      touched.add(rov.id);
+      const adjusted = applyRangeOverride(inst, rov);
+      if (rov.cancelled) {
+        // CANCELLED 范围例外：该次及后续实例全部取消（审计留痕）
+        base.delete(key);
+        cancelled.push({ ...adjusted, cancelled: true });
+      } else {
+        // 挂回原始 key：后续单次例外仍按原始 recurrence key 匹配
+        base.set(key, adjusted);
+      }
+    }
+    for (const rov of rangeOvs) {
+      if (!touched.has(rov.id)) {
+        warn(
+          warnings,
+          'info',
+          `范围例外 ${wallLabel(rov.recurrenceId, rov.isAllDay)} 在展开范围内未影响任何实例。`,
+          rov.block.range.start
+        );
+      }
+    }
+  }
+
+  // 5) 单次例外覆盖（显式单次例外优先于范围调整：按原始 key 命中后直接替换）
   for (const ov of master.overrides) {
+    if (ov.isRange) continue;
     const key = Math.round(ov.recurrenceId.toUnixTime());
     const disabled = state.disabledOverrides.has(ov.id);
 
@@ -325,7 +427,7 @@ function expandSeries(
     }
   }
 
-  // 5) 范围过滤（半开区间，相切不算重叠）
+  // 6) 范围过滤（半开区间，相切不算重叠）
   for (const inst of base.values()) {
     if (inst.startUtc < range.endUtc && inst.endUtc > range.startUtc) visible.push(inst);
   }
